@@ -3,8 +3,8 @@
 ///
 /// Use the following statement to access only the big5 codec:
 /// ```dart
-/// import 'package:enough_convert/gbk.dart';
+/// import 'package:mime_convert/gbk.dart';
 /// ```
-library enough_convert_gbk;
+library mime_convert_gbk;
 
 export 'src/gbk/gbk.dart';

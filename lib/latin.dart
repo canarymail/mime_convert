@@ -3,9 +3,9 @@
 ///
 /// Use the following statement to access all ISO-8859 latin codecs:
 /// ```dart
-/// import 'package:enough_convert/latin.dart';
+/// import 'package:mime_convert/latin.dart';
 /// ```
-library enough_convert_latin;
+library mime_convert_latin;
 
 export 'src/latin/latin10.dart';
 export 'src/latin/latin11.dart';

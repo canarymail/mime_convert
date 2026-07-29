@@ -37,7 +37,7 @@ Supports the following encodings:
 Using `enough_convert` is pretty straight forward:
 
 ```dart
-import 'package:enough_convert/enough_convert.dart';
+import 'package:mime_convert/mime_convert.dart';
 
 main() {
   final codec = const Windows1252Codec(allowInvalid: false);

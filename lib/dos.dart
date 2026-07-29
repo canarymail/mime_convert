@@ -3,8 +3,8 @@
 ///
 /// Use the following statement to access all DOS codecs:
 /// ```dart
-/// import 'package:enough_convert/dos.dart';
+/// import 'package:mime_convert/dos.dart';
 /// ```
-library enough_convert_dos;
+library mime_convert_dos;
 
 export 'src/dos/code_page_850.dart';

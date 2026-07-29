@@ -3,8 +3,8 @@
 
 import 'dart:convert' as dart_convert;
 
-import 'package:enough_convert/enough_convert.dart';
-// import 'package:enough_convert/src/base.dart';
+import 'package:mime_convert/mime_convert.dart';
+// import 'package:mime_convert/src/base.dart';
 import 'package:test/test.dart';
 
 void main() {

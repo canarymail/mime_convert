@@ -3,12 +3,13 @@
 ///
 /// Use the following statement to access all codecs:
 /// ```dart
-/// import 'package:enough_convert/enough_convert.dart';
+/// import 'package:mime_convert/mime_convert.dart';
 /// ```
 
-library enough_convert;
+library mime_convert;
 
 export 'big5.dart';
+export 'cjk.dart';
 export 'dos.dart';
 export 'gbk.dart';
 export 'koi8.dart';
