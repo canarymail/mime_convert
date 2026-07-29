@@ -24,6 +24,19 @@ const int _unicodeBomCharacterRune = 0xFEFF;
 ///                                   0xA1,0xA7,0xA1,0xE3,0xA1,0xC0]);
 const GbkCodec gbk = GbkCodec();
 
+/// Looks up a packed two-byte GBK code in the package's shared GBK table.
+///
+/// [code] is `(leadingByte << 8) | trailingByte`. This low-level helper lets
+/// related codecs reuse the already-vendored 23,940-entry table without
+/// duplicating it in the application binary.
+int? lookupGbkCodePoint(int code) => _gbkToUtf16Map[code];
+
+/// Looks up the packed two-byte GBK representation of [codePoint].
+///
+/// This exposes the package's shared inverse table for related codecs. A
+/// returned value is `(leadingByte << 8) | trailingByte`.
+int? lookupGbkCode(int codePoint) => _utf16ToGBKMap[codePoint];
+
 /// A [GbkCodec] encodes strings to GBK code units (bytes) and decodes
 /// GBK code units to strings.
 class GbkCodec extends Encoding {

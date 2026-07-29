@@ -7,6 +7,41 @@ part 'shift_jis_table.dart';
 /// Ready-to-use Shift_JIS codec, replacing invalid input with U+FFFD.
 const ShiftJisCodec shiftJis = ShiftJisCodec(allowInvalid: true);
 
+/// Looks up a WHATWG `index jis0208` code point by [pointer].
+///
+/// The package's CP932-backed Shift_JIS table exactly covers index jis0208.
+/// Converting the pointer to its Shift_JIS byte pair lets ISO-2022-JP reuse
+/// that table with no second 7,336-entry mapping in the application binary.
+int? lookupJis0208CodePoint(int pointer) {
+  if (pointer < 0 || pointer >= 94 * 94) {
+    return null;
+  }
+  final leading = pointer ~/ 188;
+  final leadingOffset = leading < 0x1F ? 0x81 : 0xC1;
+  final trailing = pointer % 188;
+  final trailingOffset = trailing < 0x3F ? 0x40 : 0x41;
+  final code = ((leading + leadingOffset) << 8) | (trailing + trailingOffset);
+  return _decodeTable[code];
+}
+
+/// Looks up the first WHATWG `index jis0208` pointer for [codePoint].
+///
+/// Returns null when the code point is not reachable by ISO-2022-JP's two
+/// 94-byte JIS bytes.
+int? lookupJis0208Pointer(int codePoint) {
+  final code = _shiftJisEncode[codePoint];
+  if (code == null || code < 0x100) {
+    return null;
+  }
+  final leadingByte = code >> 8;
+  final trailingByte = code & 0xFF;
+  final leadingOffset = leadingByte < 0xA0 ? 0x81 : 0xC1;
+  final trailingOffset = trailingByte < 0x7F ? 0x40 : 0x41;
+  final pointer =
+      (leadingByte - leadingOffset) * 188 + trailingByte - trailingOffset;
+  return pointer < 94 * 94 ? pointer : null;
+}
+
 /// Japanese Shift_JIS, absent from `dart:convert`.
 ///
 /// Without it a Shift_JIS message cannot be rendered at all: the caller is left

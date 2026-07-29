@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""
+Generate the Dart Big5 table from the WHATWG Encoding Standard index.
+
+The authoritative input is vendored at tool/data/index-big5.txt so generation
+is deterministic and works offline. To intentionally update it from WHATWG:
+
+    python3 tool/generate_big5_table.py --refresh
+
+An update must also update EXPECTED_SHA256 after reviewing the upstream
+Identifier and Date. Normal generation refuses any input whose bytes do not
+match that reviewed checksum:
+
+    python3 tool/generate_big5_table.py
+    python3 tool/generate_big5_table.py --check
+
+The generated table stores page-local delta-coded code points in one-byte Dart
+strings. Byte packing and canonical encoder pointer selection are algorithmic
+parts of the Encoding Standard and live in lib/src/big5/big5.dart.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+from pathlib import Path
+import re
+import sys
+import urllib.request
+
+
+WHATWG_INDEX_URL = "https://encoding.spec.whatwg.org/index-big5.txt"
+EXPECTED_SHA256 = "08e24270c8e95d998c994c03f907e972480dc01f58743e078654cc466203c8ff"
+
+PACKAGE_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_INDEX = PACKAGE_DIR / "tool" / "data" / "index-big5.txt"
+DEFAULT_OUTPUT = PACKAGE_DIR / "lib" / "src" / "big5" / "table.dart"
+PAGE_SHIFT = 5
+PAGE_SIZE = 1 << PAGE_SHIFT
+
+
+def parse_metadata(text: str) -> tuple[str, str]:
+    identifier_match = re.search(r"^# Identifier: ([0-9a-f]+)$", text, re.MULTILINE)
+    date_match = re.search(r"^# Date: ([0-9-]+)$", text, re.MULTILINE)
+    if identifier_match is None or date_match is None:
+        raise ValueError("WHATWG Identifier or Date is missing")
+    return identifier_match.group(1), date_match.group(1)
+
+
+def parse_index(text: str) -> dict[int, int]:
+    mappings: dict[int, int] = {}
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) < 2:
+            raise ValueError(f"Malformed index line {line_number}: {line!r}")
+        pointer = int(fields[0].strip(), 10)
+        code_point = int(fields[1], 16)
+        if pointer in mappings:
+            raise ValueError(f"Duplicate pointer {pointer} on line {line_number}")
+        if not 0 <= code_point <= 0x10FFFF:
+            raise ValueError(
+                f"Invalid code point U+{code_point:04X} on line {line_number}"
+            )
+        mappings[pointer] = code_point
+    return mappings
+
+
+def encode_unsigned_varint(value: int) -> bytes:
+    encoded = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            encoded.append(byte | 0x80)
+        else:
+            encoded.append(byte)
+            return bytes(encoded)
+
+
+def pack_index(
+    mappings: dict[int, int],
+) -> tuple[int, int, bytes, bytes]:
+    first_pointer = min(mappings)
+    last_pointer = max(mappings)
+    data = bytearray()
+    page_offsets = bytearray()
+
+    for page_start in range(first_pointer, last_pointer + 1, PAGE_SIZE):
+        offset = len(data)
+        if offset > 0xFFFF:
+            raise ValueError("Packed Big5 data no longer fits 16-bit page offsets")
+        page_offsets.extend((offset & 0xFF, offset >> 8))
+
+        previous = 0
+        page_end = min(page_start + PAGE_SIZE, last_pointer + 1)
+        for pointer in range(page_start, page_end):
+            code_point = mappings.get(pointer)
+            if code_point is None:
+                data.append(0)
+                continue
+
+            delta = code_point - previous
+            zigzag = (delta << 1) ^ (delta >> 63)
+            # Zero is reserved for an absent pointer.
+            data.extend(encode_unsigned_varint(zigzag + 1))
+            previous = code_point
+
+    return first_pointer, last_pointer, bytes(data), bytes(page_offsets)
+
+
+def escape_dart_byte(value: int) -> str:
+    if value == 0x24:
+        return r"\$"
+    if value == 0x27:
+        return r"\'"
+    if value == 0x5C:
+        return r"\\"
+    if 0x20 <= value <= 0x7E or value >= 0xA0:
+        return chr(value)
+    return rf"\x{value:02X}"
+
+
+def emit_byte_string(name: str, data: bytes) -> list[str]:
+    lines = [f"const String {name} ="]
+    for start in range(0, len(data), 96):
+        chunk = "".join(escape_dart_byte(value) for value in data[start : start + 96])
+        suffix = ";" if start + 96 >= len(data) else ""
+        lines.append(f"    '{chunk}'{suffix}")
+    return lines
+
+
+def generate(
+    mappings: dict[int, int],
+    *,
+    identifier: str,
+    date: str,
+    source_sha256: str,
+) -> str:
+    first_pointer, last_pointer, data, page_offsets = pack_index(mappings)
+    packed_size = len(data) + len(page_offsets)
+    lines = [
+        "// ignore_for_file: lines_longer_than_80_chars",
+        "",
+        "part of 'big5.dart';",
+        "",
+        "// GENERATED — do not edit by hand.",
+        "// Generated by tool/generate_big5_table.py from WHATWG index Big5.",
+        f"// Source: {WHATWG_INDEX_URL}",
+        f"// Identifier: {identifier}",
+        f"// Date: {date}",
+        f"// SHA-256: {source_sha256}",
+        f"// {len(mappings)} pointer-to-code-point mappings.",
+        "//",
+        f"// Packed representation: {len(data)} data bytes + "
+        f"{len(page_offsets)} page-offset bytes = {packed_size} bytes.",
+        "// Each page resets its delta base. Zero is an absent pointer; other",
+        "// values are unsigned LEB128 of zigzag(codePoint - previous) + 1.",
+        f"const int _big5IndexFirstPointer = {first_pointer};",
+        f"const int _big5IndexLastPointer = {last_pointer};",
+        f"const int _big5IndexPageShift = {PAGE_SHIFT};",
+        "",
+    ]
+    lines.extend(emit_byte_string("_big5IndexData", data))
+    lines.append("")
+    lines.extend(emit_byte_string("_big5IndexPageOffsets", page_offsets))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def read_verified_index(path: Path) -> tuple[str, str]:
+    data = path.read_bytes()
+    actual_sha256 = hashlib.sha256(data).hexdigest()
+    if actual_sha256 != EXPECTED_SHA256:
+        raise ValueError(
+            f"{path} has SHA-256 {actual_sha256}; expected {EXPECTED_SHA256}. "
+            "Review the upstream Identifier and Date, then update "
+            "EXPECTED_SHA256 intentionally."
+        )
+    return data.decode("utf-8"), actual_sha256
+
+
+def refresh_index(path: Path) -> None:
+    with urllib.request.urlopen(WHATWG_INDEX_URL) as response:
+        data = response.read()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--index", type=Path, default=DEFAULT_INDEX)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="download the current authoritative index before verification",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail if the checked-in generated output is not current",
+    )
+    args = parser.parse_args()
+
+    if args.refresh:
+        refresh_index(args.index)
+
+    text, source_sha256 = read_verified_index(args.index)
+    identifier, date = parse_metadata(text)
+    mappings = parse_index(text)
+    generated = generate(
+        mappings,
+        identifier=identifier,
+        date=date,
+        source_sha256=source_sha256,
+    )
+
+    if args.check:
+        if not args.output.exists() or args.output.read_text("utf-8") != generated:
+            print(f"{args.output} is stale; run {Path(__file__).name}", file=sys.stderr)
+            return 1
+        print(f"{args.output} is current ({len(mappings)} mappings)")
+        return 0
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(generated, encoding="utf-8")
+    print(
+        f"Wrote {len(mappings)} WHATWG Big5 mappings "
+        f"(Identifier {identifier}, Date {date}) to {args.output}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
