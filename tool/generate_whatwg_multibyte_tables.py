@@ -1,16 +1,14 @@
-"""Generate ISO-2022-JP and GB18030 indexes from the WHATWG data files.
-
-This script is the only networked part of the codecs. The generated Dart files
-are committed, so applications never fetch charset data at runtime.
+"""Generate ISO-2022-JP and GB18030 indexes from vendored WHATWG data.
 
 Run from ``packages/mime_convert``:
 
     python3 tool/generate_whatwg_multibyte_tables.py
     python3 tool/generate_whatwg_multibyte_tables.py --check
+    python3 tool/generate_whatwg_multibyte_tables.py --refresh
 
-The identifiers are pinned. If WHATWG publishes a new index revision the script
-fails rather than silently changing every byte mapping; update the identifiers
-only after reviewing the Encoding Standard change.
+Normal generation and checks are offline. ``--refresh`` is the only networked
+mode and still refuses content whose SHA-256 and WHATWG Identifier have not
+first been reviewed and updated in this script.
 """
 
 from __future__ import annotations
@@ -24,6 +22,7 @@ import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BASE_URL = "https://encoding.spec.whatwg.org/"
+DEFAULT_DATA_DIR = ROOT / "tool" / "data"
 
 SOURCES = {
     "index-gb18030.txt": (
@@ -56,10 +55,7 @@ CONTENT_SHA256 = {
 }
 
 
-def download(name: str) -> str:
-    with urllib.request.urlopen(BASE_URL + name, timeout=30) as response:
-        content = response.read()
-
+def verify(name: str, content: bytes) -> str:
     content_hash = hashlib.sha256(content).hexdigest()
     if content_hash != CONTENT_SHA256[name]:
         raise RuntimeError(
@@ -76,6 +72,22 @@ def download(name: str) -> str:
             f"{name}: expected WHATWG identifier {expected}, found {actual}"
         )
     return text
+
+
+def load(name: str, data_dir: pathlib.Path, *, refresh: bool) -> str:
+    path = data_dir / name
+    if refresh:
+        with urllib.request.urlopen(BASE_URL + name, timeout=30) as response:
+            content = response.read()
+        text = verify(name, content)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return text
+    if not path.exists():
+        raise RuntimeError(
+            f"{path} is missing; restore the vendored input or run --refresh"
+        )
+    return verify(name, path.read_bytes())
 
 
 def parse_index(text: str) -> dict[int, int]:
@@ -252,9 +264,25 @@ def main() -> None:
         action="store_true",
         help="fail if the checked-in Dart tables differ from pinned WHATWG data",
     )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="refresh vendored inputs after reviewing their pinned identifiers",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=pathlib.Path,
+        default=DEFAULT_DATA_DIR,
+        help="directory containing the vendored WHATWG index files",
+    )
     args = parser.parse_args()
+    if args.check and args.refresh:
+        parser.error("--check and --refresh are mutually exclusive")
 
-    parsed = {name: parse_index(download(name)) for name in SOURCES}
+    parsed = {
+        name: parse_index(load(name, args.data_dir, refresh=args.refresh))
+        for name in SOURCES
+    }
     emit_iso2022jp(
         parsed["index-jis0208.txt"],
         parsed["index-iso-2022-jp-katakana.txt"],

@@ -20,6 +20,8 @@ import unicodedata
 
 PACKAGE_ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = PACKAGE_ROOT / "lib/src/single_byte/generated_codecs.dart"
+EXPECTED_PYTHON_VERSION = (3, 14, 6)
+EXPECTED_UNICODE_VERSION = "16.0.0"
 
 # This is the exact missing set relative to mime_convert 1.6.0's 23 existing
 # Python-charmap-equivalent codecs.
@@ -159,16 +161,15 @@ def dart_string_code_point(value: int) -> str:
         raise RuntimeError(
             f"U+{value:06X} cannot be represented in a one-code-unit Dart table"
         )
+    if value < 0x20 or value > 0x7E:
+        return rf"\u{{{value:x}}}"
     character = chr(value)
-    category = unicodedata.category(character)
     if character == "'":
         return r"\'"
     if character == "\\":
         return r"\\"
     if character == "$":
         return r"\$"
-    if category.startswith("C") or category in {"Zl", "Zp"}:
-        return rf"\u{{{value:x}}}"
     return character
 
 
@@ -314,6 +315,18 @@ def main() -> None:
         help="fail if the checked-in generated file differs",
     )
     args = parser.parse_args()
+    if sys.version_info[:3] != EXPECTED_PYTHON_VERSION:
+        expected = ".".join(str(value) for value in EXPECTED_PYTHON_VERSION)
+        actual = ".".join(str(value) for value in sys.version_info[:3])
+        raise SystemExit(
+            f"Python {expected} is required for reproducible codec tables; "
+            f"found {actual}"
+        )
+    if unicodedata.unidata_version != EXPECTED_UNICODE_VERSION:
+        raise SystemExit(
+            f"Unicode {EXPECTED_UNICODE_VERSION} is required for reproducible "
+            f"codec tables; found {unicodedata.unidata_version}"
+        )
     generated = dart_format(generate())
     if args.check:
         if not args.output.exists() or args.output.read_text() != generated:

@@ -34,12 +34,9 @@ final Map<int, int> _big5EncodeIndex = _buildBig5EncodeIndex();
 
 Map<int, int> _buildBig5EncodeIndex() {
   final result = <int, int>{};
-  for (var pointer = _encoderPointerFloor;
-      pointer <= _big5IndexLastPointer;
-      pointer++) {
-    final codePoint = _big5IndexCodePoint(pointer);
-    if (codePoint == null) {
-      continue;
+  _forEachBig5IndexEntry((pointer, codePoint) {
+    if (pointer < _encoderPointerFloor) {
+      return;
     }
     if (_lastPointerCodePoints.contains(codePoint)) {
       // WHATWG requires the last pointer for these six duplicate mappings.
@@ -47,8 +44,51 @@ Map<int, int> _buildBig5EncodeIndex() {
     } else {
       result.putIfAbsent(codePoint, () => pointer);
     }
-  }
+  });
   return result;
+}
+
+/// Visits the packed index once in pointer order.
+///
+/// Unlike repeated [_big5IndexCodePoint] lookups, this preserves each page's
+/// delta state and decodes every varint exactly once. Building the lazy encoder
+/// index is therefore O(n), not O(n * pageSize).
+void _forEachBig5IndexEntry(void Function(int pointer, int codePoint) visit) {
+  const pageSize = 1 << _big5IndexPageShift;
+  const pointerCount = _big5IndexLastPointer - _big5IndexFirstPointer + 1;
+  const pageCount = (pointerCount + pageSize - 1) >> _big5IndexPageShift;
+
+  for (var page = 0; page < pageCount; page++) {
+    final pageOffsetIndex = page * 2;
+    var dataOffset = _big5IndexPageOffsets.codeUnitAt(pageOffsetIndex) |
+        (_big5IndexPageOffsets.codeUnitAt(pageOffsetIndex + 1) << 8);
+    var previousCodePoint = 0;
+    final pageStart = page * pageSize;
+    final entriesInPage = (pointerCount - pageStart).clamp(0, pageSize).toInt();
+
+    for (var position = 0; position < entriesInPage; position++) {
+      var byte = _big5IndexData.codeUnitAt(dataOffset++);
+      if (byte == 0) {
+        continue;
+      }
+
+      var encodedDelta = byte & 0x7F;
+      var shift = 7;
+      while ((byte & 0x80) != 0) {
+        byte = _big5IndexData.codeUnitAt(dataOffset++);
+        encodedDelta |= (byte & 0x7F) << shift;
+        shift += 7;
+      }
+
+      final zigzag = encodedDelta - 1;
+      final delta = (zigzag >> 1) ^ -(zigzag & 1);
+      previousCodePoint += delta;
+      visit(
+        _big5IndexFirstPointer + pageStart + position,
+        previousCodePoint,
+      );
+    }
+  }
 }
 
 /// Looks up one WHATWG Big5 pointer in the generated packed index.

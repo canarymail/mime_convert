@@ -6,6 +6,7 @@ sequence and asking it to decode gives an authoritative table without fetching
 anything. Run:
 
     python3 tool/generate_cjk_tables.py
+    python3 tool/generate_cjk_tables.py --check
 
 Key packing, matching the existing Big5 table in this package:
     single byte    -> key = b                (< 0x100)
@@ -18,9 +19,13 @@ second const map of this size would roughly double the cost in app binary
 size for something almost never exercised. Big5 and GBK in this package ship
 both directions and cost ~80k lines of source between them.
 """
-import os
+import argparse
+import pathlib
+import sys
 
-OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib", "src", "cjk")
+PACKAGE_ROOT = pathlib.Path(__file__).resolve().parents[1]
+OUT_DIR = PACKAGE_ROOT / "lib" / "src" / "cjk"
+EXPECTED_PYTHON_VERSION = (3, 14, 6)
 
 # Dart file stem -> CPython codec to generate the table from.
 #
@@ -158,20 +163,47 @@ def emit(codec: str, stem: str, table: dict, overrides: dict) -> str:
 
 
 def main() -> None:
-    os.makedirs(OUT_DIR, exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail if a checked-in generated table differs",
+    )
+    args = parser.parse_args()
+
+    if sys.version_info[:3] != EXPECTED_PYTHON_VERSION:
+        expected = ".".join(str(value) for value in EXPECTED_PYTHON_VERSION)
+        actual = ".".join(str(value) for value in sys.version_info[:3])
+        raise SystemExit(
+            f"Python {expected} is required for reproducible codec tables; "
+            f"found {actual}"
+        )
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    stale_paths = []
     for stem, codec in CODECS.items():
         table = build_table(codec)
         overrides = build_encode_overrides(codec, table)
-        path = os.path.join(OUT_DIR, f"{stem}_table.dart")
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(emit(codec, stem, table, overrides))
+        path = OUT_DIR / f"{stem}_table.dart"
+        generated = emit(codec, stem, table, overrides)
+        if args.check:
+            if not path.exists() or path.read_text(encoding="utf-8") != generated:
+                stale_paths.append(path)
+        else:
+            path.write_text(generated, encoding="utf-8")
         singles = sum(1 for k in table if k < 0x100)
         doubles = sum(1 for k in table if 0x100 <= k < 0x1000000)
         triples = sum(1 for k in table if k >= 0x1000000)
         print(
             f"{codec:<10} {len(table):>6} mappings "
             f"({singles} single, {doubles} double, {triples} triple, "
-            f"{len(overrides)} encode overrides) -> {os.path.basename(path)}"
+            f"{len(overrides)} encode overrides) -> {path.name}"
+        )
+    if stale_paths:
+        joined = "\n".join(f"  {path}" for path in stale_paths)
+        raise SystemExit(
+            "Generated CJK tables are stale; run "
+            f"{pathlib.Path(__file__).name}:\n{joined}"
         )
 
 

@@ -6,6 +6,44 @@ import 'package:test/test.dart';
 void main() {
   const sample = 'A\u20ac\u{1f600}';
 
+  group('UTF-16', () {
+    const codec = Utf16Codec();
+
+    test('sniffs and consumes either BOM', () {
+      expect(codec.decode(<int>[0xfe, 0xff, 0x00, 0x41]), 'A');
+      expect(codec.decode(<int>[0xff, 0xfe, 0x41, 0x00]), 'A');
+    });
+
+    test('defaults to little-endian without a BOM', () {
+      expect(codec.decode(<int>[0x41, 0x00]), 'A');
+    });
+
+    test('encoder emits one little-endian BOM', () {
+      expect(codec.encode('A'), <int>[0xff, 0xfe, 0x41, 0x00]);
+    });
+
+    test('chunked decoder recognizes a split BOM', () async {
+      final decoded = await Stream<List<int>>.fromIterable(
+        const <List<int>>[
+          <int>[0xfe],
+          <int>[0xff, 0x00],
+          <int>[0x41],
+        ],
+      ).transform(const Utf16Decoder()).join();
+      expect(decoded, 'A');
+    });
+
+    test('chunked encoder emits exactly one BOM', () async {
+      final chunks = await Stream<String>.fromIterable(
+        const <String>['A', 'B'],
+      ).transform(const Utf16Encoder()).toList();
+      expect(
+        chunks.expand((chunk) => chunk),
+        <int>[0xff, 0xfe, 0x41, 0x00, 0x42, 0x00],
+      );
+    });
+  });
+
   group('UTF-16LE', () {
     const codec = Utf16LeCodec();
 
@@ -27,6 +65,12 @@ void main() {
     test('does not add or consume a BOM', () {
       expect(codec.encode('\ufeffA'), <int>[0xff, 0xfe, 0x41, 0x00]);
       expect(codec.decode(<int>[0xff, 0xfe, 0x41, 0x00]), '\ufeffA');
+    });
+
+    test('BOM-aware mode consumes and honors either BOM', () {
+      const bomAware = Utf16LeCodec(bomAware: true);
+      expect(bomAware.decode(<int>[0xff, 0xfe, 0x41, 0x00]), 'A');
+      expect(bomAware.decode(<int>[0xfe, 0xff, 0x00, 0x41]), 'A');
     });
   });
 
@@ -51,6 +95,12 @@ void main() {
     test('does not add or consume a BOM', () {
       expect(codec.encode('\ufeffA'), <int>[0xfe, 0xff, 0x00, 0x41]);
       expect(codec.decode(<int>[0xfe, 0xff, 0x00, 0x41]), '\ufeffA');
+    });
+
+    test('BOM-aware mode consumes and honors either BOM', () {
+      const bomAware = Utf16BeCodec(bomAware: true);
+      expect(bomAware.decode(<int>[0xfe, 0xff, 0x00, 0x41]), 'A');
+      expect(bomAware.decode(<int>[0xff, 0xfe, 0x41, 0x00]), 'A');
     });
   });
 

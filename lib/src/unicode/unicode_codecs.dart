@@ -2,16 +2,46 @@
 
 import 'dart:convert' as dart_convert;
 
-/// UTF-16 little-endian without implicit BOM handling.
-class Utf16LeCodec extends dart_convert.Encoding {
-  /// Creates a UTF-16LE codec.
-  const Utf16LeCodec({this.allowInvalid = false});
+/// BOM-aware UTF-16, defaulting to little-endian when no BOM is present.
+///
+/// The decoder consumes a leading UTF-16 BOM and lets it override the default
+/// byte order. The encoder emits a little-endian BOM followed by UTF-16LE.
+class Utf16Codec extends dart_convert.Encoding {
+  /// Creates a BOM-aware UTF-16 codec.
+  const Utf16Codec({this.allowInvalid = false});
 
   /// Whether malformed input is replaced with U+FFFD.
   final bool allowInvalid;
 
   @override
-  Utf16LeDecoder get decoder => Utf16LeDecoder(allowInvalid: allowInvalid);
+  Utf16Decoder get decoder => Utf16Decoder(allowInvalid: allowInvalid);
+
+  @override
+  Utf16Encoder get encoder => Utf16Encoder(allowInvalid: allowInvalid);
+
+  @override
+  String get name => 'utf-16';
+}
+
+/// UTF-16 little-endian without implicit BOM handling.
+class Utf16LeCodec extends dart_convert.Encoding {
+  /// Creates a UTF-16LE codec.
+  const Utf16LeCodec({
+    this.allowInvalid = false,
+    this.bomAware = false,
+  });
+
+  /// Whether malformed input is replaced with U+FFFD.
+  final bool allowInvalid;
+
+  /// Whether a leading UTF-16 BOM is consumed and may override byte order.
+  final bool bomAware;
+
+  @override
+  Utf16LeDecoder get decoder => Utf16LeDecoder(
+        allowInvalid: allowInvalid,
+        bomAware: bomAware,
+      );
 
   @override
   Utf16LeEncoder get encoder => Utf16LeEncoder(allowInvalid: allowInvalid);
@@ -23,13 +53,22 @@ class Utf16LeCodec extends dart_convert.Encoding {
 /// UTF-16 big-endian without implicit BOM handling.
 class Utf16BeCodec extends dart_convert.Encoding {
   /// Creates a UTF-16BE codec.
-  const Utf16BeCodec({this.allowInvalid = false});
+  const Utf16BeCodec({
+    this.allowInvalid = false,
+    this.bomAware = false,
+  });
 
   /// Whether malformed input is replaced with U+FFFD.
   final bool allowInvalid;
 
+  /// Whether a leading UTF-16 BOM is consumed and may override byte order.
+  final bool bomAware;
+
   @override
-  Utf16BeDecoder get decoder => Utf16BeDecoder(allowInvalid: allowInvalid);
+  Utf16BeDecoder get decoder => Utf16BeDecoder(
+        allowInvalid: allowInvalid,
+        bomAware: bomAware,
+      );
 
   @override
   Utf16BeEncoder get encoder => Utf16BeEncoder(allowInvalid: allowInvalid);
@@ -38,18 +77,74 @@ class Utf16BeCodec extends dart_convert.Encoding {
   String get name => 'utf-16be';
 }
 
+/// Decodes BOM-aware UTF-16, defaulting to little-endian without a BOM.
+class Utf16Decoder extends _Utf16Decoder {
+  /// Creates a BOM-aware UTF-16 decoder.
+  const Utf16Decoder({bool allowInvalid = false})
+      : super(
+          defaultLittleEndian: true,
+          allowInvalid: allowInvalid,
+          bomAware: true,
+        );
+}
+
 /// Decodes UTF-16 little-endian bytes.
 class Utf16LeDecoder extends _Utf16Decoder {
   /// Creates a UTF-16LE decoder.
-  const Utf16LeDecoder({bool allowInvalid = false})
-      : super(littleEndian: true, allowInvalid: allowInvalid);
+  const Utf16LeDecoder({
+    bool allowInvalid = false,
+    bool bomAware = false,
+  }) : super(
+          defaultLittleEndian: true,
+          allowInvalid: allowInvalid,
+          bomAware: bomAware,
+        );
 }
 
 /// Decodes UTF-16 big-endian bytes.
 class Utf16BeDecoder extends _Utf16Decoder {
   /// Creates a UTF-16BE decoder.
-  const Utf16BeDecoder({bool allowInvalid = false})
-      : super(littleEndian: false, allowInvalid: allowInvalid);
+  const Utf16BeDecoder({
+    bool allowInvalid = false,
+    bool bomAware = false,
+  }) : super(
+          defaultLittleEndian: false,
+          allowInvalid: allowInvalid,
+          bomAware: bomAware,
+        );
+}
+
+/// Encodes UTF-16 with a little-endian BOM.
+class Utf16Encoder extends dart_convert.Converter<String, List<int>> {
+  /// Creates a BOM-emitting UTF-16 encoder.
+  const Utf16Encoder({this.allowInvalid = false});
+
+  /// Whether malformed UTF-16 input is replaced with U+FFFD.
+  final bool allowInvalid;
+
+  @override
+  List<int> convert(String input, [int start = 0, int? end]) => <int>[
+        0xff,
+        0xfe,
+        ...Utf16LeEncoder(allowInvalid: allowInvalid).convert(
+          input,
+          start,
+          end,
+        ),
+      ];
+
+  @override
+  dart_convert.StringConversionSink startChunkedConversion(
+    Sink<List<int>> sink,
+  ) {
+    final byteSink = (sink is dart_convert.ByteConversionSink
+        ? sink
+        : dart_convert.ByteConversionSink.from(sink))
+      ..add(const <int>[0xff, 0xfe]);
+    return Utf16LeEncoder(
+      allowInvalid: allowInvalid,
+    ).startChunkedConversion(byteSink);
+  }
 }
 
 /// Encodes UTF-16 little-endian bytes without adding a BOM.
@@ -68,19 +163,22 @@ class Utf16BeEncoder extends _Utf16Encoder {
 
 abstract class _Utf16Decoder extends dart_convert.Converter<List<int>, String> {
   const _Utf16Decoder({
-    required this.littleEndian,
+    required this.defaultLittleEndian,
     required this.allowInvalid,
+    required this.bomAware,
   });
 
-  final bool littleEndian;
+  final bool defaultLittleEndian;
   final bool allowInvalid;
+  final bool bomAware;
 
   @override
   String convert(List<int> input, [int start = 0, int? end]) {
     final usedEnd = RangeError.checkValidRange(start, end, input.length);
     final processor = _Utf16DecoderProcessor(
-      littleEndian: littleEndian,
+      defaultLittleEndian: defaultLittleEndian,
       allowInvalid: allowInvalid,
+      bomAware: bomAware,
     );
     return processor.add(input, start, usedEnd, isLast: true);
   }
@@ -93,8 +191,9 @@ abstract class _Utf16Decoder extends dart_convert.Converter<List<int>, String> {
     return _Utf16DecoderSink(
       stringSink,
       _Utf16DecoderProcessor(
-        littleEndian: littleEndian,
+        defaultLittleEndian: defaultLittleEndian,
         allowInvalid: allowInvalid,
+        bomAware: bomAware,
       ),
     );
   }
@@ -223,12 +322,19 @@ class Utf8SigEncoder extends dart_convert.Converter<String, List<int>> {
 
 class _Utf16DecoderProcessor {
   _Utf16DecoderProcessor({
-    required this.littleEndian,
+    required this.defaultLittleEndian,
     required this.allowInvalid,
-  });
+    required this.bomAware,
+  })  : _littleEndian = defaultLittleEndian,
+        _bomResolved = !bomAware;
 
-  final bool littleEndian;
+  final bool defaultLittleEndian;
   final bool allowInvalid;
+  final bool bomAware;
+  bool _littleEndian;
+  bool _bomResolved;
+  final List<int> _initialBytes = <int>[];
+  final List<int> _initialByteOffsets = <int>[];
   int? _pendingByte;
   int? _pendingByteOffset;
   int? _pendingHighSurrogate;
@@ -240,37 +346,30 @@ class _Utf16DecoderProcessor {
     for (var index = start; index < end; index++) {
       final byte = input[index];
       final absoluteOffset = _streamOffset + index - start;
-      if (byte < 0 || byte > 0xff) {
-        final high = _pendingHighSurrogate;
-        if (high != null) {
-          _addInvalid(output, _pendingHighSurrogateOffset!, high);
-          _pendingHighSurrogate = null;
-          _pendingHighSurrogateOffset = null;
+      if (!_bomResolved) {
+        _initialBytes.add(byte);
+        _initialByteOffsets.add(absoluteOffset);
+        if (_initialBytes.length == 2) {
+          _resolveBom(output);
         }
-        final pendingByte = _pendingByte;
-        if (pendingByte != null) {
-          _addInvalid(output, _pendingByteOffset!, pendingByte);
-          _pendingByte = null;
-          _pendingByteOffset = null;
-        }
-        _addInvalid(output, absoluteOffset, byte);
-        continue;
+      } else {
+        _addByte(output, byte, absoluteOffset);
       }
-      final firstByte = _pendingByte;
-      if (firstByte == null) {
-        _pendingByte = byte;
-        _pendingByteOffset = absoluteOffset;
-        continue;
-      }
-      final unitOffset = _pendingByteOffset!;
-      _pendingByte = null;
-      _pendingByteOffset = null;
-      final codeUnit =
-          littleEndian ? firstByte | (byte << 8) : (firstByte << 8) | byte;
-      _addCodeUnit(output, codeUnit, unitOffset);
     }
     _streamOffset += end - start;
     if (isLast) {
+      if (!_bomResolved) {
+        _bomResolved = true;
+        for (var index = 0; index < _initialBytes.length; index++) {
+          _addByte(
+            output,
+            _initialBytes[index],
+            _initialByteOffsets[index],
+          );
+        }
+        _initialBytes.clear();
+        _initialByteOffsets.clear();
+      }
       final high = _pendingHighSurrogate;
       if (high != null) {
         _addInvalid(output, _pendingHighSurrogateOffset!, high);
@@ -285,6 +384,58 @@ class _Utf16DecoderProcessor {
       }
     }
     return String.fromCharCodes(output);
+  }
+
+  void _resolveBom(List<int> output) {
+    final first = _initialBytes[0];
+    final firstOffset = _initialByteOffsets[0];
+    final second = _initialBytes[1];
+    final secondOffset = _initialByteOffsets[1];
+    _bomResolved = true;
+    _initialBytes.clear();
+    _initialByteOffsets.clear();
+    if (first == 0xfe && second == 0xff) {
+      _littleEndian = false;
+      return;
+    }
+    if (first == 0xff && second == 0xfe) {
+      _littleEndian = true;
+      return;
+    }
+    _littleEndian = defaultLittleEndian;
+    _addByte(output, first, firstOffset);
+    _addByte(output, second, secondOffset);
+  }
+
+  void _addByte(List<int> output, int byte, int absoluteOffset) {
+    if (byte < 0 || byte > 0xff) {
+      final high = _pendingHighSurrogate;
+      if (high != null) {
+        _addInvalid(output, _pendingHighSurrogateOffset!, high);
+        _pendingHighSurrogate = null;
+        _pendingHighSurrogateOffset = null;
+      }
+      final pendingByte = _pendingByte;
+      if (pendingByte != null) {
+        _addInvalid(output, _pendingByteOffset!, pendingByte);
+        _pendingByte = null;
+        _pendingByteOffset = null;
+      }
+      _addInvalid(output, absoluteOffset, byte);
+      return;
+    }
+    final firstByte = _pendingByte;
+    if (firstByte == null) {
+      _pendingByte = byte;
+      _pendingByteOffset = absoluteOffset;
+      return;
+    }
+    final unitOffset = _pendingByteOffset!;
+    _pendingByte = null;
+    _pendingByteOffset = null;
+    final codeUnit =
+        _littleEndian ? firstByte | (byte << 8) : (firstByte << 8) | byte;
+    _addCodeUnit(output, codeUnit, unitOffset);
   }
 
   void _addCodeUnit(List<int> output, int codeUnit, int offset) {
