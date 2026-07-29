@@ -13147,3 +13147,12 @@ const Map<int, int> _decodeTable = {
   0x18FEDE2: 0x9FA3,
   0x18FEDE3: 0x9FA5,
 };
+
+// Code points whose encoding the inverted decode table cannot produce,
+// because they encode to a sequence that decodes back to a different
+// code point. Overlaid on the inverse — see invertDecodeTable.
+// 2 entries.
+const Map<int, int> _encodeOverrides = {
+  0xA5: 0x5C,
+  0x203E: 0x7E,
+};

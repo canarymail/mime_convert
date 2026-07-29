@@ -133,6 +133,19 @@ class CjkEncoder extends dart_convert.Converter<String, List<int>> {
 ///
 /// Where several byte sequences decode to the same code point the lowest wins,
 /// which prefers the shorter, more canonical encoding.
+///
+/// **This is not a complete encoder on its own.** Inversion assumes encode and
+/// decode are symmetric, and they are not: a handful of code points encode to a
+/// sequence that decodes back to a *different* code point, so no inverse can
+/// reach them — U+2212 MINUS SIGN in cp932, U+00A5 YEN and U+203E OVERLINE in
+/// EUC-JP, among others. Each codec overlays its generated `_encodeOverrides`
+/// on this result to cover them.
+///
+/// Duplicate resolution follows CPython, the same source the decode tables come
+/// from, so the two directions agree with each other. The WHATWG Encoding
+/// Standard canonicalises some cp932 duplicates differently; that divergence is
+/// deliberate and affects only which of several equivalent byte sequences is
+/// emitted when encoding, never decoding.
 Map<int, int> invertDecodeTable(Map<int, int> decodeTable) {
   final inverted = <int, int>{};
   for (final entry in decodeTable.entries) {

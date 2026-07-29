@@ -126,6 +126,39 @@ void main() {
     });
   });
 
+  group('encoder covers the asymmetric cases', () {
+    // Inverting the decode table cannot produce these: each encodes to a
+    // sequence that decodes back to a *different* code point, so the inverse
+    // never contains them. They come from the generated _encodeOverrides.
+    test('Shift_JIS U+2212 MINUS SIGN', () {
+      expect(shiftJis.encode('−'), [0x81, 0x7C]);
+    });
+
+    test('Shift_JIS cent, pound and not signs', () {
+      expect(shiftJis.encode('¢'), [0x81, 0x91]);
+      expect(shiftJis.encode('£'), [0x81, 0x92]);
+      expect(shiftJis.encode('¬'), [0x81, 0xCA]);
+    });
+
+    test('Shift_JIS U+301C WAVE DASH and U+2016', () {
+      expect(shiftJis.encode('〜'), [0x81, 0x60]);
+      expect(shiftJis.encode('‖'), [0x81, 0x61]);
+    });
+
+    test('EUC-JP yen and overline', () {
+      expect(eucJp.encode('¥'), [0x5C]);
+      expect(eucJp.encode('‾'), [0x7E]);
+    });
+
+    test('these deliberately do not round-trip', () {
+      // Encoding is defined for them; decoding the result yields the canonical
+      // code point for those bytes, which is a different character. That is the
+      // charset's behaviour, not a defect in this implementation.
+      expect(shiftJis.decode(shiftJis.encode('−')), '－');
+      expect(eucJp.decode(eucJp.encode('¥')), r'\');
+    });
+  });
+
   group('codec identity', () {
     test('names match the charset labels used in MIME headers', () {
       expect(shiftJis.name, 'shift_jis');

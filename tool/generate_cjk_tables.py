@@ -87,7 +87,45 @@ def build_table(codec: str) -> dict:
     return table
 
 
-def emit(codec: str, stem: str, table: dict) -> str:
+def build_encode_overrides(codec: str, table: dict) -> dict:
+    """
+    Code points whose encoding cannot be recovered by inverting the decode table.
+
+    Inversion assumes encode and decode are symmetric. They are not: several code
+    points encode to a byte sequence that decodes back to a *different* code
+    point, so no inverse of the decode table can produce them. In cp932 that
+    covers U+2212 MINUS SIGN, U+00A2/A3/AC, U+2016 and U+301C; in EUC-JP,
+    U+00A5 YEN and U+203E OVERLINE.
+
+    Without these the encoder throws (or emits '?') for characters the charset
+    can represent perfectly well. They are few enough to carry as an overlay
+    rather than shipping a second full table.
+    """
+    inverted = {}
+    for key, code_point in table.items():
+        existing = inverted.get(code_point)
+        if existing is None or key < existing:
+            inverted[code_point] = key
+
+    overrides = {}
+    for code_point in range(0x110000):
+        if code_point in inverted:
+            continue
+        try:
+            encoded = chr(code_point).encode(codec)
+        except (UnicodeEncodeError, ValueError):
+            continue
+        if len(encoded) == 1:
+            packed = encoded[0]
+        elif len(encoded) == 2:
+            packed = encoded[0] << 8 | encoded[1]
+        else:
+            packed = 0x1000000 + (encoded[0] << 16 | encoded[1] << 8 | encoded[2])
+        overrides[code_point] = packed
+    return overrides
+
+
+def emit(codec: str, stem: str, table: dict, overrides: dict) -> str:
     lines = [
         f"part of '{stem}.dart';",
         "",
@@ -105,6 +143,17 @@ def emit(codec: str, stem: str, table: dict) -> str:
         lines.append(f"  0x{key:X}: 0x{table[key]:X},")
     lines.append("};")
     lines.append("")
+    lines.extend([
+        "// Code points whose encoding the inverted decode table cannot produce,",
+        "// because they encode to a sequence that decodes back to a different",
+        "// code point. Overlaid on the inverse — see invertDecodeTable.",
+        f"// {len(overrides)} entries.",
+        "const Map<int, int> _encodeOverrides = {",
+    ])
+    for key in sorted(overrides):
+        lines.append(f"  0x{key:X}: 0x{overrides[key]:X},")
+    lines.append("};")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -112,15 +161,17 @@ def main() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
     for stem, codec in CODECS.items():
         table = build_table(codec)
+        overrides = build_encode_overrides(codec, table)
         path = os.path.join(OUT_DIR, f"{stem}_table.dart")
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write(emit(codec, stem, table))
+            fh.write(emit(codec, stem, table, overrides))
         singles = sum(1 for k in table if k < 0x100)
         doubles = sum(1 for k in table if 0x100 <= k < 0x1000000)
         triples = sum(1 for k in table if k >= 0x1000000)
         print(
             f"{codec:<10} {len(table):>6} mappings "
-            f"({singles} single, {doubles} double, {triples} triple) -> {os.path.basename(path)}"
+            f"({singles} single, {doubles} double, {triples} triple, "
+            f"{len(overrides)} encode overrides) -> {os.path.basename(path)}"
         )
 
 

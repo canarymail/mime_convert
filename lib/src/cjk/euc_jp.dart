@@ -31,5 +31,14 @@ class EucJpCodec extends dart_convert.Encoding {
       CjkEncoder(_eucJpEncode, allowInvalid: allowInvalid);
 }
 
-/// Inverse of the decode table, built on first use. See [invertDecodeTable].
-final Map<int, int> _eucJpEncode = invertDecodeTable(_decodeTable);
+/// Inverse of the decode table, built on first use, with the asymmetric cases
+/// overlaid.
+///
+/// Inversion alone is not a complete encoder: a few code points encode to a
+/// sequence that decodes back to a *different* code point, so no inverse can
+/// produce them. [_encodeOverrides] carries exactly those, generated from the
+/// source encoder. See [invertDecodeTable].
+final Map<int, int> _eucJpEncode = {
+  ...invertDecodeTable(_decodeTable),
+  ..._encodeOverrides,
+};
