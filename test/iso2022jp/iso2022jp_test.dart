@@ -77,6 +77,23 @@ void main() {
       }
     });
 
+    test('back-to-back escapes decode cleanly only when allowed', () {
+      // 日 ESC ( B ESC $ B 本: a run closed and the next opened at once.
+      const input = <int>[
+        0x1B, 0x24, 0x42, 0x46, 0x7C, 0x1B, 0x28, 0x42, //
+        0x1B, 0x24, 0x42, 0x4B, 0x5C, 0x1B, 0x28, 0x42,
+      ];
+      const mail = Iso2022JpCodec(allowConsecutiveEscapes: true);
+
+      expect(iso2022Jp.decode(input), '日\uFFFD本');
+      expect(mail.decode(input), '日本');
+      expect(
+        const Iso2022JpCodec(allowInvalid: true, allowConsecutiveEscapes: true)
+            .decode(<int>[0x1B, 0x24]),
+        '\uFFFD\$',
+      );
+    });
+
     test('strict decoder and encoder surface malformed input', () {
       const strict = Iso2022JpCodec();
 

@@ -65,7 +65,10 @@ class BaseDecoder extends dart_convert.Converter<List<int>, String> {
         final index = byte - (startIndex + 1);
         modified ??= List.from(input);
         modified[i] = symbols.codeUnitAt(index);
-      } else if (byte <= startBlockLength) {
+      } else if (byte != 0 && byte <= startBlockLength) {
+        // The start block replaces bytes 0x01 onwards, so NUL is never in it.
+        // Without the `byte != 0` check NUL read startBlock[-1], or crashed
+        // on `startBlock!` in a codec that has no start block.
         modified ??= List.from(input);
         modified[i] = startBlock!.codeUnitAt(byte - 1);
       }

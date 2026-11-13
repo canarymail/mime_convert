@@ -15,16 +15,30 @@ const Iso2022JpCodec iso2022Jp = Iso2022JpCodec(allowInvalid: true);
 /// encoder sinks retain escape and lead-byte state across chunk boundaries.
 class Iso2022JpCodec extends dart_convert.Encoding {
   /// Creates an ISO-2022-JP codec.
-  const Iso2022JpCodec({this.allowInvalid = false});
+  const Iso2022JpCodec({
+    this.allowInvalid = false,
+    this.allowConsecutiveEscapes = false,
+  });
 
   /// Whether malformed input is replaced instead of throwing.
   final bool allowInvalid;
+
+  /// Whether two escape sequences with no text between them decode cleanly.
+  ///
+  /// WHATWG treats that as an error, but Japanese mail generators routinely
+  /// close one run and open the next back to back (`ESC ( B ESC $ B`), and
+  /// mail clients read it as plain text. Off by default to stay conformant;
+  /// mail decoding turns it on.
+  final bool allowConsecutiveEscapes;
 
   @override
   String get name => 'iso-2022-jp';
 
   @override
-  Iso2022JpDecoder get decoder => Iso2022JpDecoder(allowInvalid: allowInvalid);
+  Iso2022JpDecoder get decoder => Iso2022JpDecoder(
+        allowInvalid: allowInvalid,
+        allowConsecutiveEscapes: allowConsecutiveEscapes,
+      );
 
   @override
   Iso2022JpEncoder get encoder => Iso2022JpEncoder(allowInvalid: allowInvalid);
@@ -33,10 +47,16 @@ class Iso2022JpCodec extends dart_convert.Encoding {
 /// Converts ISO-2022-JP bytes to Unicode.
 class Iso2022JpDecoder extends dart_convert.Converter<List<int>, String> {
   /// Creates an ISO-2022-JP decoder.
-  const Iso2022JpDecoder({this.allowInvalid = false});
+  const Iso2022JpDecoder({
+    this.allowInvalid = false,
+    this.allowConsecutiveEscapes = false,
+  });
 
   /// Whether malformed input is replaced with U+FFFD.
   final bool allowInvalid;
+
+  /// See [Iso2022JpCodec.allowConsecutiveEscapes].
+  final bool allowConsecutiveEscapes;
 
   @override
   String convert(List<int> input, [int start = 0, int? end]) {
@@ -45,6 +65,7 @@ class Iso2022JpDecoder extends dart_convert.Converter<List<int>, String> {
     _Iso2022JpDecoderMachine(
       output,
       allowInvalid: allowInvalid,
+      allowConsecutiveEscapes: allowConsecutiveEscapes,
     )
       ..add(input, start, usedEnd)
       ..finish(input, usedEnd);
@@ -58,7 +79,11 @@ class Iso2022JpDecoder extends dart_convert.Converter<List<int>, String> {
     final stringSink = sink is dart_convert.StringConversionSink
         ? sink
         : dart_convert.StringConversionSink.from(sink);
-    return _Iso2022JpDecoderSink(stringSink, allowInvalid: allowInvalid);
+    return _Iso2022JpDecoderSink(
+      stringSink,
+      allowInvalid: allowInvalid,
+      allowConsecutiveEscapes: allowConsecutiveEscapes,
+    );
   }
 }
 
@@ -107,10 +132,15 @@ enum _DecoderState {
 }
 
 class _Iso2022JpDecoderMachine {
-  _Iso2022JpDecoderMachine(this.output, {required this.allowInvalid});
+  _Iso2022JpDecoderMachine(
+    this.output, {
+    required this.allowInvalid,
+    required this.allowConsecutiveEscapes,
+  });
 
   final StringSink output;
   final bool allowInvalid;
+  final bool allowConsecutiveEscapes;
 
   _DecoderState state = _DecoderState.ascii;
   _DecoderState outputState = _DecoderState.ascii;
@@ -228,7 +258,7 @@ class _Iso2022JpDecoderMachine {
           outputState = nextState;
           final consecutiveEscape = escapeOutput;
           escapeOutput = true;
-          if (consecutiveEscape) {
+          if (consecutiveEscape && !allowConsecutiveEscapes) {
             _error(source, offset, 'Consecutive ISO-2022-JP escapes');
           }
         } else {
@@ -266,9 +296,16 @@ class _Iso2022JpDecoderMachine {
 }
 
 class _Iso2022JpDecoderSink extends dart_convert.ByteConversionSinkBase {
-  _Iso2022JpDecoderSink(this.sink, {required bool allowInvalid})
-      : buffer = StringBuffer() {
-    machine = _Iso2022JpDecoderMachine(buffer, allowInvalid: allowInvalid);
+  _Iso2022JpDecoderSink(
+    this.sink, {
+    required bool allowInvalid,
+    required bool allowConsecutiveEscapes,
+  }) : buffer = StringBuffer() {
+    machine = _Iso2022JpDecoderMachine(
+      buffer,
+      allowInvalid: allowInvalid,
+      allowConsecutiveEscapes: allowConsecutiveEscapes,
+    );
   }
 
   final dart_convert.StringConversionSink sink;
