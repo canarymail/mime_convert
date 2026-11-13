@@ -1,5 +1,6 @@
 import 'dart:convert' as dart_convert;
 
+import '../base.dart';
 import 'dos.dart';
 
 /// Provides a DOS-Latin1 / cp850 codec for easy encoding and decoding.
@@ -48,6 +49,61 @@ class CodePage850Decoder extends DosCodePageDecoder {
         );
 }
 
+/// Standard cp850 / DOS-Latin-1 for text, as in the Unicode, IBM and Python
+/// tables: bytes 0x00-0x7F are ASCII, control characters included.
+///
+/// [CodePage850Codec] decodes 0x01-0x1F and 0x7F to the glyphs DOS drew for
+/// them on screen (☺, ♪, ◙, ⌂ ...), so a line break or tab in text comes out
+/// as a symbol. Use this codec to read text such as email.
+class CodePage850TextCodec extends dart_convert.Encoding {
+  /// Creates a new [CodePage850TextCodec]
+  ///
+  /// Set [allowInvalid] to `true` for ignoring invalid data.
+  /// When invalid data is allowed it  will be encoded to ? and decoded to �
+  const CodePage850TextCodec({
+    this.allowInvalid = false,
+  });
+
+  /// Should invalid character codes be ignored?
+  ///
+  /// When `false`, an invalid character code
+  /// will throw [FormatException].
+  final bool allowInvalid;
+
+  @override
+  CodePage850TextDecoder get decoder =>
+      CodePage850TextDecoder(allowInvalid: allowInvalid);
+
+  @override
+  CodePage850TextEncoder get encoder =>
+      CodePage850TextEncoder(allowInvalid: allowInvalid);
+
+  @override
+  String get name => 'cp850';
+}
+
+/// Decodes standard cp850 text, see [CodePage850TextCodec].
+class CodePage850TextDecoder extends BaseDecoder {
+  /// Creates a new [CodePage850TextDecoder]
+  ///
+  /// Set [allowInvalid] to `true` for ignoring invalid data.
+  /// When invalid data is allowed, it will be decoded to �
+  const CodePage850TextDecoder({
+    bool allowInvalid = false,
+  }) : super(_cp850TextSymbols, 0x7F, allowInvalid: allowInvalid);
+}
+
+/// Encodes standard cp850 text, see [CodePage850TextCodec].
+class CodePage850TextEncoder extends BaseEncoder {
+  /// Creates a new [CodePage850TextEncoder]
+  ///
+  /// Set [allowInvalid] to `true` for ignoring invalid data.
+  /// When invalid data is allowed, it will be encoded to ?
+  CodePage850TextEncoder({
+    bool allowInvalid = false,
+  }) : super(_cp850TextMap, 0x7F, allowInvalid: allowInvalid);
+}
+
 /// Encodes texts into cp-850 / DOS-Latin-1 data
 class CodePage850Encoder extends DosCodePageEncoder {
   /// Creates a new [CodePage850Encoder]
@@ -63,6 +119,18 @@ class CodePage850Encoder extends DosCodePageEncoder {
 const String _cp850Symbols =
 // ignore: lines_longer_than_80_chars
     '⌂ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜø£Ø×ƒáíóúñÑªº¿®¬½¼¡«»░▒▓│┤ÁÂÀ©╣║╗╝¢¥┐└┴┬├─┼ãÃ╚╔╩╦╠═╬¤ðÐÊËÈıÍÎÏ┘┌█▄¦Ì▀ÓßÔÒõÕµþÞÚÛÙýÝ¯´\u{00AD}±‗¾¶§÷¸°¨·¹³²■\u{00A0}';
+
+/// [_cp850Symbols] without its first entry, the ⌂ glyph DOS drew for 0x7F:
+/// 0x80-0xFF.
+const String _cp850TextSymbols =
+// ignore: lines_longer_than_80_chars
+    'ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜø£Ø×ƒáíóúñÑªº¿®¬½¼¡«»░▒▓│┤ÁÂÀ©╣║╗╝¢¥┐└┴┬├─┼ãÃ╚╔╩╦╠═╬¤ðÐÊËÈıÍÎÏ┘┌█▄¦Ì▀ÓßÔÒõÕµþÞÚÛÙýÝ¯´\u{00AD}±‗¾¶§÷¸°¨·¹³²■\u{00A0}';
+
+/// [_cp850Map] without the glyphs for 0x01-0x1F and 0x7F.
+final Map<int, int> _cp850TextMap = {
+  for (final entry in _cp850Map.entries)
+    if (entry.value >= 0x80) entry.key: entry.value,
+};
 
 const Map<int, int> _cp850Map = {
   // start block:
